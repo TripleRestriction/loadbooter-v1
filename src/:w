@@ -1,0 +1,139 @@
+[BITS 16]
+[ORG 0x7c00]
+
+CODE_OFF equ 0x10
+DATA_OFF equ 0x18
+
+start:
+    cli                         ; stop certain interrupts by setting interrupts flag = 0
+
+    xor ax, ax
+    mov ds, ax                  ; zero out the segment registers...no you can't xor them
+    mov es, ax
+    mov ss, ax
+    mov sp, 0x7c00              ; stack grows from 0x7c00 to 0x0, code goes from 0x7c00 to 0x7e00 (512 bytes)
+    jmp load_PM                 ; start protected mode setup
+;; ucomment tese lines for a hello world
+    ;; sti                         ; opposite of cli set interrupts flag = 1
+;;     mov si, msg
+
+;; print:  
+;;     lodsb                       ; load byte by byte from data segment (ds) into al using si (ds:si)
+;;     cmp al, 0                   ; check if character is a null byte
+;;     je done
+;;     mov ah, 0x0e                ; 0x0e = write character in tty
+;;     int 0x10                    ; video interrupt
+;;     jmp print
+
+;; done:   
+;;     cli
+;;     jmp load_PM
+
+;; msg:
+;;     db "Hello world!", 0
+
+load_PM:    
+    cli
+
+    ;; zero out 4096 bytes starting at 0x90000 (our zero page)
+    ;; addr = segment * 16 + offset = segment:offset
+    mov ax, 0x9000
+    mov es, ax                  ; segment
+    xor di, di                  ; di = 0x0
+    xor al, al                  ; al = 0 => value to fill
+    mov cx, 0x1000              ; 4096 bytes
+    cld                         ; increment es:di by incrementing di
+    rep stosb                   ; magic, uses es:di, which equals 0x90000
+
+    ;; load memory map into our zero page
+    mov ax, 0x9000
+    mov es, ax                  ; segment
+    mov di, 0x2d0               ; offset, kernel wants it at 0x2d0
+    xor ebx, ebx                ; start from the first entry
+    xor bp, bp                  ; number of entries
+
+e820_next:  
+    mov eax, 0xe820             ; the memory map function thing
+    mov ecx, 24                 ; get a 24 byte structure, modern bioses give 24 bytes at a time
+    mov edx, 0x534D4150         ; apparently SMAP is required in edx
+    int 0x15                    ; call the bios
+    cmp eax, 0x534D4150         ; SMAP
+    jne crash                   ; idk just ud2 ts not doing a whole print thing
+
+    mov eax, [es:di + 8]        ; somehting
+    or eax, [es:di + 12]        ; more things
+    jz e820_skip                ; more things
+    
+    inc bp                      ; increment our total entry count by 1
+    add di, 24                  ; next entry offset
+    cmp bp, 128                 ; total 128 entries
+    jae e820_done
+e820_skip:  
+    test ebx, ebx               ; ebx = 0 => it was the last entry
+    jnz e820_next
+e820_done:  
+    test bp, bp
+    jz crash                    ; no entries => something must be wrong
+    mov ax, bp
+    mov [es:0x1eb], al
+
+    lgdt[gdt_descriptor]        ; loads pointer to gdt in GDTR register
+    mov eax, cr0
+    or al, 1
+    mov cr0, eax                ; set first bit of cr0 = 1, we going protected mode gng
+    jmp CODE_OFF:PModeMain
+
+;; gdt - global descriptor table is a table that defines characterestics of segments like base addr, size (limit) and permissions
+;; notes: https://wiki.osdev.org/Global_Descriptor_Table
+gdt_start:  
+    ;; null entry
+    dd 0x0
+    dd 0x0
+
+    ;; another null entry
+    dd 0x0
+    dd 0x0
+
+    ;; code segment descriptor 
+    dw 0xFFFF                   ; limit
+    dw 0x0000                   ; base
+    db 0x00                     ; base 2
+    db 10011010b                ; access byte
+    db 11001111b                ; flags
+    db 0x00                     ; base
+
+    ;; data segment descriptor 
+    dw 0xFFFF                   ; limit
+    dw 0x0000                   ; base
+    db 0x00                     ; base 2
+    db 10010010b                ; access byte
+    db 11001111b                ; flags
+    db 0x00                     ; base
+gdt_end:
+
+gdt_descriptor: 
+    dw gdt_end - gdt_start - 1  ; size of gdt - 1
+    dd gdt_start
+crash:  
+    ud2
+
+[BITS 32]
+PModeMain:
+    mov ax, DATA_OFF
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov ss, ax
+    mov gs, ax
+    mov ebp, 0x9c00
+    mov esp, ebp
+
+    ;; unlock the A20 line, this allows usage of 1MiB+ memory
+    in al, 0x92                 ; load motherboard data into al
+    or al, 2                    ; flip the first bit
+    out 0x92, al                ; send back to motherboard
+    jmp $                       ; infinite loop
+
+times 510 - ($ - $$) db 0       ; fill the the rest bytes, as bios needs to be 512 bytes (0aa55 is 2 bytes so using 510)
+
+dw 0xaa55
