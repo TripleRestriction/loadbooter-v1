@@ -55,10 +55,6 @@ load_PM:
     cld                         ; increment es:di by incrementing di
     rep stosb                   ; magic, uses es:di, which equals 0x90000
 
-    ;; load memory map into our zero page
-    mov ax, 0x9000
-    mov es, ax                  ; segment
-    mov di, 0x2d0               ; offset, kernel wants it at 0x2d0
     xor ebx, ebx                ; start from the first entry
     xor bp, bp                  ; number of entries
 
