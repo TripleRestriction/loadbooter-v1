@@ -225,7 +225,7 @@ drq:
     rep insw
     pop ecx
     loop sector
-    mov esi, 0x90000
+    mov esi, 0x90000            ; the address of the zero page
     mov eax, 0x100000
     jmp eax
 
